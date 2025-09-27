@@ -1,0 +1,12 @@
+{
+  "idf.portWin": "COM8",
+  "idf.customExtraVars": {
+    "IDF_TARGET": "esp32s3"
+  },
+  "idf.flashType": "UART",
+  "files.associations": {
+    "yingwu.h": "c",
+    "stdio.h": "c",
+    "camera_wifi.h": "c"
+  }
+}
