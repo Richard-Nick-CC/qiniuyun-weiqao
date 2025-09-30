@@ -1,8 +1,10 @@
 #include "line_follower.h"
 #include "esp32_s3_szp.h"
 #include "motor_driver.h"
+#include "ultrasonic_sensor.h"
 #include "esp_log.h"
 #include "driver/i2c.h"
+#include "esp_timer.h"
 #include <stdio.h>
 #include <math.h>
 
@@ -24,7 +26,12 @@ static line_follower_t g_line_follower = {
     .sensor_state = {0,0,0,0},
     .mode = LINE_FOLLOWER_MODE_READ,
     .speed = BASE_SPEED,
-    .turn_speed_diff = MAX_TURN_SPEED
+    .turn_speed_diff = MAX_TURN_SPEED,
+    .obstacle_state = OBSTACLE_STATE_NONE,
+    .obstacle_action = OBSTACLE_ACTION_CONTINUE,
+    .obstacle_distance = 0.0f,
+    .obstacle_start_time = 0,
+    .obstacle_enabled = 1  // 默认启用避障功能
 };
 
 static TaskHandle_t g_line_follower_task_handle = NULL;

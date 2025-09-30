@@ -13,6 +13,11 @@ extern "C" {
  */
 void camera_wifi_init(void);
 
+/**
+ * @brief 启动摄像头 HTTP 服务器
+ */
+void start_camera_server(void);
+
 #ifdef __cplusplus
 }
 #endif
