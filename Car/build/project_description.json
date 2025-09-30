@@ -1,7 +1,7 @@
 {
     "version":            "1.1",
     "project_name":       "car",
-    "project_version":    "1e3f927-dirty",
+    "project_version":    "03f02da-dirty",
     "project_path":       "E:/QiNiuYun/Car",
     "idf_path":           "C:/Users/weiqiao/esp/v5.4/esp-idf",
     "build_dir":          "E:/QiNiuYun/Car/build",

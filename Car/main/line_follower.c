@@ -7,6 +7,7 @@
 #include "esp_timer.h"
 #include <stdio.h>
 #include <math.h>
+#include <string.h>
 
 static const char *TAG = "line_follower";
 
@@ -103,8 +104,183 @@ float calc_error_pd(uint8_t sensor_value){
     return current_error;
 }
 
+// ===================== 避障辅助函数 =====================
+// 获取动态避障距离（根据当前速度调整）
+static float get_dynamic_obstacle_distance(void) {
+    float base_distance = OBSTACLE_DETECTION_DISTANCE;
+    
+    // 根据当前速度动态调整检测距离
+    if (g_line_follower.speed > BASE_SPEED * 0.8) {
+        base_distance *= 1.3; // 高速时增加检测距离
+    } else if (g_line_follower.speed < BASE_SPEED * 0.5) {
+        base_distance *= 0.8; // 低速时减少检测距离
+    }
+    
+    return base_distance;
+}
+
+// 多次测量取平均值，提高检测准确性
+static float get_average_distance(int samples) {
+    float total = 0;
+    int valid_samples = 0;
+    
+    for (int i = 0; i < samples; i++) {
+        float distance = 0;
+        esp_err_t ret = ultrasonic_sensor_measure(&distance);
+        if (ret == ESP_OK && distance > 0 && distance < 400) { // 有效测量范围
+            total += distance;
+            valid_samples++;
+        }
+        vTaskDelay(pdMS_TO_TICKS(10)); // 短暂延时
+    }
+    
+    return (valid_samples > 0) ? (total / valid_samples) : -1;
+}
+
+// ===================== 避障检测 =====================
+static bool check_obstacle(void) {
+    if (!g_line_follower.obstacle_enabled) {
+        return false;
+    }
+    
+    // 使用多次测量的平均值
+    float distance = get_average_distance(3);
+    g_line_follower.obstacle_distance = distance;
+    
+    if (distance > 0 && distance < get_dynamic_obstacle_distance()) {
+        ESP_LOGD(TAG, "Obstacle detected at %.1f cm (threshold: %.1f cm)", 
+                distance, get_dynamic_obstacle_distance());
+        return true;
+    }
+    
+    return false;
+}
+
+// ===================== 避障行为处理 =====================
+static void handle_obstacle_avoidance(void) {
+    uint32_t current_time = esp_timer_get_time() / 1000; // 转换为毫秒
+    uint32_t elapsed_time = current_time - g_line_follower.obstacle_start_time;
+    
+    switch (g_line_follower.obstacle_state) {
+        case OBSTACLE_STATE_NONE:
+            if (check_obstacle()) {
+                ESP_LOGI(TAG, "Obstacle detected at %.1f cm", g_line_follower.obstacle_distance);
+                g_line_follower.obstacle_state = OBSTACLE_STATE_DETECTED;
+                g_line_follower.obstacle_action = OBSTACLE_ACTION_STOP;
+                g_line_follower.obstacle_start_time = current_time;
+            }
+            break;
+            
+        case OBSTACLE_STATE_DETECTED:
+            if (elapsed_time > 200) { // 停止200ms后立即开始避障
+                g_line_follower.obstacle_state = OBSTACLE_STATE_AVOIDING;
+                g_line_follower.obstacle_action = OBSTACLE_ACTION_BACKUP;
+                g_line_follower.obstacle_start_time = current_time;
+                ESP_LOGI(TAG, "Starting obstacle avoidance - backing up");
+            }
+            break;
+            
+        case OBSTACLE_STATE_AVOIDING:
+            if (g_line_follower.obstacle_action == OBSTACLE_ACTION_BACKUP) {
+                if (elapsed_time > OBSTACLE_BACKUP_TIME) {
+                    // 后退完成，一律右转
+                    g_line_follower.obstacle_action = OBSTACLE_ACTION_TURN_RIGHT;
+                    g_line_follower.obstacle_start_time = current_time;
+                    ESP_LOGI(TAG, "Backing up complete - turning right");
+                }
+            } else if (g_line_follower.obstacle_action == OBSTACLE_ACTION_TURN_RIGHT) {
+                if (elapsed_time > OBSTACLE_TURN_TIME) {
+                    // 右转完成，进入返回状态
+                    g_line_follower.obstacle_state = OBSTACLE_STATE_RETURNING;
+                    g_line_follower.obstacle_action = OBSTACLE_ACTION_CONTINUE;
+                    g_line_follower.obstacle_start_time = current_time;
+                    ESP_LOGI(TAG, "Right turn complete - returning to line following");
+                }
+            }
+            break;
+            
+        case OBSTACLE_STATE_RETURNING:
+            // 在返回阶段，检查是否找到了线
+            if (elapsed_time > 500) { // 给一些时间让传感器稳定
+                uint16_t line_data = read_line_follow();
+                bool line_found = false;
+                
+                // 检查是否有传感器检测到线
+                for (int i = 0; i < 5; i++) {
+                    if ((line_data >> i) & 0x01) {
+                        line_found = true;
+                        break;
+                    }
+                }
+                
+                if (line_found) {
+                    // 找到线了，立即恢复循迹
+                    g_line_follower.obstacle_state = OBSTACLE_STATE_NONE;
+                    g_line_follower.obstacle_action = OBSTACLE_ACTION_CONTINUE;
+                    ESP_LOGI(TAG, "Line detected - obstacle avoidance complete");
+                } else if (elapsed_time > OBSTACLE_RETURN_TIME) {
+                    // 超时仍未找到线，检查障碍物情况
+                    if (!check_obstacle()) {
+                        g_line_follower.obstacle_state = OBSTACLE_STATE_NONE;
+                        g_line_follower.obstacle_action = OBSTACLE_ACTION_CONTINUE;
+                        ESP_LOGI(TAG, "Timeout - resuming normal operation");
+                    } else {
+                        // 如果还有障碍物，重新开始避障
+                        g_line_follower.obstacle_state = OBSTACLE_STATE_DETECTED;
+                        g_line_follower.obstacle_start_time = current_time;
+                        ESP_LOGI(TAG, "Obstacle still present - restarting avoidance");
+                    }
+                }
+            }
+            break;
+    }
+}
+
+// ===================== 执行避障动作 =====================
+static void execute_obstacle_action(void) {
+    switch (g_line_follower.obstacle_action) {
+        case OBSTACLE_ACTION_STOP:
+            motor_stop_all();
+            ESP_LOGD(TAG, "Obstacle action: STOP");
+            break;
+            
+        case OBSTACLE_ACTION_BACKUP:
+            // 后退速度适中，确保稳定
+            motor_control_both(MOTOR_BACKWARD, BASE_SPEED * 0.6, MOTOR_BACKWARD, BASE_SPEED * 0.6);
+            ESP_LOGD(TAG, "Obstacle action: BACKUP (speed: %d)", (int)(BASE_SPEED * 0.6));
+            break;
+            
+        case OBSTACLE_ACTION_TURN_LEFT:
+            // 原地左转，左轮后退，右轮前进
+            motor_control_both(MOTOR_BACKWARD, BASE_SPEED * 0.5, MOTOR_FORWARD, BASE_SPEED * 0.5);
+            ESP_LOGD(TAG, "Obstacle action: TURN_LEFT");
+            break;
+            
+        case OBSTACLE_ACTION_TURN_RIGHT:
+            // 原地右转，左轮前进，右轮后退
+            motor_control_both(MOTOR_FORWARD, BASE_SPEED * 0.5, MOTOR_BACKWARD, BASE_SPEED * 0.5);
+            ESP_LOGD(TAG, "Obstacle action: TURN_RIGHT");
+            break;
+            
+        case OBSTACLE_ACTION_CONTINUE:
+            // 不执行任何动作，让循迹算法接管
+            ESP_LOGD(TAG, "Obstacle action: CONTINUE - handing over to line following");
+            return; // 直接返回，不设置电机速度
+    }
+}
+
 // ===================== 循迹处理 =====================
 static void line_follower_process(uint8_t sensor_value){
+    // 首先处理避障逻辑
+    handle_obstacle_avoidance();
+    
+    // 如果正在避障，执行避障动作而不是循迹
+    if (g_line_follower.obstacle_state != OBSTACLE_STATE_NONE && 
+        g_line_follower.obstacle_action != OBSTACLE_ACTION_CONTINUE) {
+        execute_obstacle_action();
+        return; // 避障期间不执行循迹逻辑
+    }
+    
     // 失线检测
     bool line_detected=false;
     for(int i=0;i<4;i++){
@@ -205,6 +381,15 @@ static void line_follower_task(void *pvParameters){
         vTaskDelete(NULL);
         return;
     }
+    
+    // 初始化超声波传感器（用于避障）
+    if(ultrasonic_sensor_init()!=ESP_OK){
+        ESP_LOGE(TAG,"Ultrasonic sensor init failed");
+        g_line_follower.obstacle_enabled = 0; // 禁用避障功能
+        ESP_LOGW(TAG,"Obstacle avoidance disabled due to sensor init failure");
+    } else {
+        ESP_LOGI(TAG,"Ultrasonic sensor initialized for obstacle avoidance");
+    }
 
     while(1){
         g_line_follower.sensor_value = read_line_follow();
@@ -249,5 +434,26 @@ esp_err_t line_follower_set_speed(uint8_t speed){
 esp_err_t line_follower_get_state(uint8_t state[4]){
     if(state==NULL) return ESP_ERR_INVALID_ARG;
     memcpy(state,g_line_follower.sensor_state,4);
+    return ESP_OK;
+}
+
+esp_err_t line_follower_set_obstacle_avoidance(uint8_t enabled) {
+    g_line_follower.obstacle_enabled = enabled ? 1 : 0;
+    if (!enabled) {
+        // 禁用避障时，重置避障状态
+        g_line_follower.obstacle_state = OBSTACLE_STATE_NONE;
+        g_line_follower.obstacle_action = OBSTACLE_ACTION_CONTINUE;
+        ESP_LOGI(TAG, "Obstacle avoidance %s", enabled ? "enabled" : "disabled");
+    }
+    return ESP_OK;
+}
+
+esp_err_t line_follower_get_obstacle_state(obstacle_state_t *state, float *distance) {
+    if (state == NULL || distance == NULL) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    
+    *state = g_line_follower.obstacle_state;
+    *distance = g_line_follower.obstacle_distance;
     return ESP_OK;
 }

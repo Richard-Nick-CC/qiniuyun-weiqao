@@ -37,7 +37,7 @@
 
 ![image-20250923215315139](README.assets/image-20250923215315139.png)
 
-### 小车实物照片
+### 小车实物照片（此处没加摄像头 因为买的摄像头线序不对 但是程序是可以跑的 我有一个开发板摄像头已验证过）
 
 ![](README.assets/%E5%BE%AE%E4%BF%A1%E5%9B%BE%E7%89%87_20250930205033_2932_26.jpg)
 
@@ -194,7 +194,93 @@ esp_err_t ultrasonic_sensor_measure(float *distance)
 }
 ```
 
-## 循迹
+### 超声波避障
+
+```c
+// ===================== 避障行为处理 =====================
+static void handle_obstacle_avoidance(void) {
+    uint32_t current_time = esp_timer_get_time() / 1000; // 转换为毫秒
+    uint32_t elapsed_time = current_time - g_line_follower.obstacle_start_time;
+    
+    switch (g_line_follower.obstacle_state) {
+        case OBSTACLE_STATE_NONE:
+            if (check_obstacle()) {
+                ESP_LOGI(TAG, "Obstacle detected at %.1f cm", g_line_follower.obstacle_distance);
+                g_line_follower.obstacle_state = OBSTACLE_STATE_DETECTED;
+                g_line_follower.obstacle_action = OBSTACLE_ACTION_STOP;
+                g_line_follower.obstacle_start_time = current_time;
+            }
+            break;
+            
+        case OBSTACLE_STATE_DETECTED:
+            if (elapsed_time > 200) { // 停止200ms后立即开始避障
+                g_line_follower.obstacle_state = OBSTACLE_STATE_AVOIDING;
+                g_line_follower.obstacle_action = OBSTACLE_ACTION_BACKUP;
+                g_line_follower.obstacle_start_time = current_time;
+                ESP_LOGI(TAG, "Starting obstacle avoidance - backing up");
+            }
+            break;
+            
+        case OBSTACLE_STATE_AVOIDING:
+            if (g_line_follower.obstacle_action == OBSTACLE_ACTION_BACKUP) {
+                if (elapsed_time > OBSTACLE_BACKUP_TIME) {
+                    // 后退完成，一律右转
+                    g_line_follower.obstacle_action = OBSTACLE_ACTION_TURN_RIGHT;
+                    g_line_follower.obstacle_start_time = current_time;
+                    ESP_LOGI(TAG, "Backing up complete - turning right");
+                }
+            } else if (g_line_follower.obstacle_action == OBSTACLE_ACTION_TURN_RIGHT) {
+                if (elapsed_time > OBSTACLE_TURN_TIME) {
+                    // 右转完成，进入返回状态
+                    g_line_follower.obstacle_state = OBSTACLE_STATE_RETURNING;
+                    g_line_follower.obstacle_action = OBSTACLE_ACTION_CONTINUE;
+                    g_line_follower.obstacle_start_time = current_time;
+                    ESP_LOGI(TAG, "Right turn complete - returning to line following");
+                }
+            }
+            break;
+            
+        case OBSTACLE_STATE_RETURNING:
+            // 在返回阶段，检查是否找到了线
+            if (elapsed_time > 500) { // 给一些时间让传感器稳定
+                uint16_t line_data = read_line_follow();
+                bool line_found = false;
+                
+                // 检查是否有传感器检测到线
+                for (int i = 0; i < 5; i++) {
+                    if ((line_data >> i) & 0x01) {
+                        line_found = true;
+                        break;
+                    }
+                }
+                
+                if (line_found) {
+                    // 找到线了，立即恢复循迹
+                    g_line_follower.obstacle_state = OBSTACLE_STATE_NONE;
+                    g_line_follower.obstacle_action = OBSTACLE_ACTION_CONTINUE;
+                    ESP_LOGI(TAG, "Line detected - obstacle avoidance complete");
+                } else if (elapsed_time > OBSTACLE_RETURN_TIME) {
+                    // 超时仍未找到线，检查障碍物情况
+                    if (!check_obstacle()) {
+                        g_line_follower.obstacle_state = OBSTACLE_STATE_NONE;
+                        g_line_follower.obstacle_action = OBSTACLE_ACTION_CONTINUE;
+                        ESP_LOGI(TAG, "Timeout - resuming normal operation");
+                    } else {
+                        // 如果还有障碍物，重新开始避障
+                        g_line_follower.obstacle_state = OBSTACLE_STATE_DETECTED;
+                        g_line_follower.obstacle_start_time = current_time;
+                        ESP_LOGI(TAG, "Obstacle still present - restarting avoidance");
+                    }
+                }
+            }
+            break;
+    }
+}
+```
+
+
+
+### 循迹模块
 
 ```c
 / ===================== PD误差计算 =====================
@@ -265,9 +351,24 @@ static void line_follower_process(uint8_t sensor_value){
 
 ![image-20250930110452714](README.assets/image-20250930110452714.png)
 
+## 程序运行
+
+- 系统初始化 ( app_main )
+
+- I2C总线初始化
+- 电机驱动初始化 ( motor_driver_init )
+- 超声波传感器初始化 ( ultrasonic_sensor_init )
+- 创建超声波测距任务
+- 摄像头和WiFi初始化
+- 2.循迹任务启动
+
+- 调用 line_follower_start_task(4096, 3, 55, 20) 启动循迹任务
+- 基础速度设置为55%，优先级为3
+- 创建传感器数据打印任务用于调试
+
 ## 总结
 
-由于是一个人搞得所以比较匆，只完成了基础部分+视频传输
+由于是一个人搞得所以比较匆忙，只完成了基础部分+视频传输
 
 由于硬件画板子花费了两天 送到嘉立创打板子又花了三天  ，所以只有两三天的时间来搞。还有一些硬件上的缺陷：当时忘了加几个按键，导致调pid参数特别费事），有空应该把esp32的空中升级搞一下，下次烧录程序就不这么费事了。板子上画了 摄像头接口但是买的摄像头线顺序不对，但是这一部分功能也算实现了（我有一个开发板带有设摄像头）。
 
