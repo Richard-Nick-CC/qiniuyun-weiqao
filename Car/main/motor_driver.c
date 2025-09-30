@@ -35,7 +35,7 @@ esp_err_t motor_driver_init(void)
         .timer_sel      = LEDC_TIMER,
         .intr_type      = LEDC_INTR_DISABLE,
         .gpio_num       = MOTOR_LEFT_PWM1_PIN,
-        .duty           = 0,  // 初始占空比为0
+        .duty           = 0,  // 初始占空比为0，因为后续会调用motor_stop_all()
         .hpoint         = 0,
     };
     
@@ -52,7 +52,7 @@ esp_err_t motor_driver_init(void)
         .timer_sel      = LEDC_TIMER,
         .intr_type      = LEDC_INTR_DISABLE,
         .gpio_num       = MOTOR_LEFT_PWM2_PIN,
-        .duty           = 0,  // 初始占空比为0
+        .duty           = 0,  // 初始占空比为0，因为后续会调用motor_stop_all()
         .hpoint         = 0,
     };
     
@@ -69,7 +69,7 @@ esp_err_t motor_driver_init(void)
         .timer_sel      = LEDC_TIMER,
         .intr_type      = LEDC_INTR_DISABLE,
         .gpio_num       = MOTOR_RIGHT_PWM1_PIN,
-        .duty           = 0,  // 初始占空比为0
+        .duty           = 0,  // 初始占空比为0，因为后续会调用motor_stop_all()
         .hpoint         = 0,
     };
     
@@ -86,7 +86,7 @@ esp_err_t motor_driver_init(void)
         .timer_sel      = LEDC_TIMER,
         .intr_type      = LEDC_INTR_DISABLE,
         .gpio_num       = MOTOR_RIGHT_PWM2_PIN,
-        .duty           = 0,  // 初始占空比为0
+        .duty           = 0,  // 初始占空比为0，因为后续会调用motor_stop_all()
         .hpoint         = 0,
     };
     

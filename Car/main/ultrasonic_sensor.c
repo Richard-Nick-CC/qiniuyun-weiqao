@@ -2,6 +2,13 @@
 
 static const char *TAG = "ultrasonic_sensor";
 
+// 全局变量，用于存储最新的距离测量结果
+static float g_last_distance = 0.0f;
+// 互斥锁，用于保护共享资源
+static SemaphoreHandle_t g_distance_mutex = NULL;
+// 默认的测量间隔(ms)
+#define ULTRASONIC_DEFAULT_INTERVAL_MS (100)
+
 esp_err_t ultrasonic_sensor_init(void)
 {
     esp_err_t ret = ESP_OK;
@@ -81,6 +88,9 @@ esp_err_t ultrasonic_sensor_measure(float *distance)
         return ESP_ERR_INVALID_ARG;
     }
     
+    // 初始化开始时间用于超时检测
+    start_time = esp_timer_get_time();
+    
     // 触发超声波传感器
     ret = ultrasonic_sensor_trigger();
     if (ret != ESP_OK) {
@@ -130,6 +140,100 @@ esp_err_t ultrasonic_sensor_measure(float *distance)
     }
     
     ESP_LOGD(TAG, "Measured distance: %.2f cm", *distance);
+    
+    return ESP_OK;
+}
+
+/**
+ * @brief 获取最新的距离测量结果
+ * 
+ * @param distance 最新的距离测量结果(cm)
+ * @return esp_err_t 成功返回ESP_OK，失败返回相应错误码
+ */
+esp_err_t ultrasonic_sensor_get_last_distance(float *distance)
+{
+    if (distance == NULL) {
+        ESP_LOGE(TAG, "Distance pointer is NULL");
+        return ESP_ERR_INVALID_ARG;
+    }
+    
+    if (g_distance_mutex == NULL) {
+        ESP_LOGE(TAG, "Mutex not initialized");
+        return ESP_FAIL;
+    }
+    
+    // 获取互斥锁
+    if (xSemaphoreTake(g_distance_mutex, portMAX_DELAY) != pdTRUE) {
+        ESP_LOGE(TAG, "Failed to take mutex");
+        return ESP_FAIL;
+    }
+    
+    // 复制最新的距离测量结果
+    *distance = g_last_distance;
+    
+    // 释放互斥锁
+    xSemaphoreGive(g_distance_mutex);
+    
+    return ESP_OK;
+}
+
+/**
+ * @brief 超声波测距任务函数
+ * 
+ * @param pvParameters 任务参数（未使用）
+ */
+static void ultrasonic_sensor_task(void *pvParameters)
+{
+    float distance = 0.0f;
+    
+    // 初始化超声波传感器
+    if (ultrasonic_sensor_init() != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to initialize ultrasonic sensor");
+        vTaskDelete(NULL);
+        return;
+    }
+    
+    while (1) {
+        // 测量距离
+        if (ultrasonic_sensor_measure(&distance) == ESP_OK) {
+            // 获取互斥锁
+            if (xSemaphoreTake(g_distance_mutex, portMAX_DELAY) == pdTRUE) {
+                // 更新最新的距离测量结果
+                g_last_distance = distance;
+                
+                // 释放互斥锁
+                xSemaphoreGive(g_distance_mutex);
+            }
+        } else {
+            ESP_LOGE(TAG, "Failed to measure distance");
+        }
+        
+        // 延时一段时间后再次测量
+        vTaskDelay(pdMS_TO_TICKS(ULTRASONIC_DEFAULT_INTERVAL_MS));
+    }
+}
+
+esp_err_t ultrasonic_sensor_create_task(uint8_t task_priority, uint32_t task_stack_size, TaskHandle_t *task_handle)
+{
+    esp_err_t ret = ESP_OK;
+    
+    // 初始化互斥锁
+    if (g_distance_mutex == NULL) {
+        g_distance_mutex = xSemaphoreCreateMutex();
+        if (g_distance_mutex == NULL) {
+            ESP_LOGE(TAG, "Failed to create mutex");
+            return ESP_FAIL;
+        }
+    }
+    
+    // 创建超声波测距任务
+    if (xTaskCreate(ultrasonic_sensor_task, "ultrasonic_task", 
+                   task_stack_size, NULL, task_priority, task_handle) != pdPASS) {
+        ESP_LOGE(TAG, "Failed to create ultrasonic sensor task");
+        return ESP_FAIL;
+    }
+    
+    ESP_LOGI(TAG, "Ultrasonic sensor task created successfully");
     
     return ESP_OK;
 }

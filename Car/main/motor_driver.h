@@ -8,11 +8,11 @@
 #include "freertos/task.h"
 
 // 电机引脚定义 - 每个电机使用两个PWM引脚
-#define MOTOR_LEFT_PWM1_PIN    (GPIO_NUM_48)  // 左电机PWM引脚1
-#define MOTOR_LEFT_PWM2_PIN    (GPIO_NUM_45)  // 左电机PWM引脚2
+#define MOTOR_LEFT_PWM1_PIN    (GPIO_NUM_11)  // 左电机PWM引脚1
+#define MOTOR_LEFT_PWM2_PIN    (GPIO_NUM_12)  // 左电机PWM引脚2
 
-#define MOTOR_RIGHT_PWM1_PIN   (GPIO_NUM_21)  // 右电机PWM引脚1
-#define MOTOR_RIGHT_PWM2_PIN   (GPIO_NUM_47)  // 右电机PWM引脚2
+#define MOTOR_RIGHT_PWM1_PIN   (GPIO_NUM_14)  // 右电机PWM引脚1
+#define MOTOR_RIGHT_PWM2_PIN   (GPIO_NUM_13)  // 右电机PWM引脚2
 
 // LEDC配置
 #define LEDC_TIMER             LEDC_TIMER_0
@@ -82,4 +82,4 @@ esp_err_t motor_stop(motor_id_t motor_id);
  */
 esp_err_t motor_stop_all(void);
 
-#endif // MOTOR_DRIVER_H
+#endif /* MOTOR_DRIVER_H */

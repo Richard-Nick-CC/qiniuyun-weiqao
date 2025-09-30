@@ -434,9 +434,12 @@ static void task_process_camera(void *arg)
 // 让摄像头显示到LCD
 void app_camera_lcd(void)
 {
+    
     xQueueLCDFrame = xQueueCreate(2, sizeof(camera_fb_t *));
     xTaskCreatePinnedToCore(task_process_camera, "task_process_camera", 3 * 1024, NULL, 5, NULL, 1);
     xTaskCreatePinnedToCore(task_process_lcd, "task_process_lcd", 4 * 1024, NULL, 5, NULL, 0);
+    
+  
 }
 
 /********************    摄像头 ↑   *************************/

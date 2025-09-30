@@ -42,5 +42,23 @@ esp_err_t ultrasonic_sensor_measure(float *distance);
  */
 esp_err_t ultrasonic_sensor_trigger(void);
 
+/**
+ * @brief 获取最新的距离测量结果
+ * 
+ * @param distance 最新的距离测量结果(cm)
+ * @return esp_err_t 成功返回ESP_OK，失败返回相应错误码
+ */
+esp_err_t ultrasonic_sensor_get_last_distance(float *distance);
+
+/**
+ * @brief 创建超声波测距任务
+ * 
+ * @param task_priority 任务优先级
+ * @param task_stack_size 任务栈大小
+ * @param task_handle 任务句柄（可选，可传入NULL）
+ * @return esp_err_t 成功返回ESP_OK，失败返回相应错误码
+ */
+esp_err_t ultrasonic_sensor_create_task(uint8_t task_priority, uint32_t task_stack_size, TaskHandle_t *task_handle);
+
 /***************************  超声波传感器 ↑   ****************************/
 /*******************************************************************************/
